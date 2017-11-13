@@ -28,6 +28,9 @@ import java.util.function.Consumer;
  */
 public class Blocking {
 
+    public static final int cpu_size = 4;
+    public static final int db_size = 20;
+
     static AtomicInteger blocking = new AtomicInteger();
     static AtomicInteger working = new AtomicInteger();
 
@@ -36,19 +39,20 @@ public class Blocking {
         startLogger();
 
         AtomicInteger event = new AtomicInteger();
-        Scheduler cpu = Schedulers.newParallel("cpu", 4);
-        Scheduler db = Schedulers.newParallel("db", 20);
+        Scheduler cpu = Schedulers.newParallel("cpu", cpu_size);
+        Scheduler db = Schedulers.newParallel("db", db_size);
 
         Flux
                 .<Integer>generate(s -> s.next(event.incrementAndGet()))
-                .publishOn(cpu)
+                .parallel(cpu_size + db_size)
+                .runOn(cpu)
                 .doOnNext(__ -> work(10000))
-                .publishOn(db)
+                .runOn(db)
                 .doOnNext(__ -> block(100))
-                .publishOn(cpu)
+                .runOn(cpu)
                 .doOnNext(__ -> work(10000))
                 .doOnNext(__ -> System.out.print('.'))
-                .blockLast();
+                .subscribe();
 
         cpu.dispose();
         db.dispose();
