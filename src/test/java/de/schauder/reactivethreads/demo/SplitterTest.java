@@ -33,6 +33,8 @@ import java.util.Queue;
  */
 public class SplitterTest {
 
+    public static final Duration SHORT_WAIT = Duration.ofMillis(100);
+
     @Test
     public void eachEventGetsPushedOnce() {
 
@@ -41,9 +43,35 @@ public class SplitterTest {
         Mono<Integer> splitted = split(range);
 
 
-        StepVerifier.create(splitted).expectNext(1).expectComplete().verify();
-        StepVerifier.create(splitted).expectNext(2).expectComplete().verify();
-        StepVerifier.create(splitted).expectNext(3).expectComplete().verify();
+        StepVerifier.create(splitted).expectNext(1).expectComplete().verify(SHORT_WAIT);
+        StepVerifier.create(splitted).expectNext(2).expectComplete().verify(SHORT_WAIT);
+        StepVerifier.create(splitted).expectNext(3).expectComplete().verify(SHORT_WAIT);
+    }
+
+    @Test
+    public void complete() {
+
+        Flux<Integer> range = Flux.just(1);
+
+        Mono<Integer> splitted = split(range);
+
+
+        StepVerifier.create(splitted).expectNext(1).expectComplete().verify(SHORT_WAIT);
+        StepVerifier.create(splitted).expectComplete().verify(SHORT_WAIT);
+        StepVerifier.create(splitted).expectComplete().verify(SHORT_WAIT);
+    }
+
+    @Test
+    public void error() {
+
+        Flux<Integer> range = Flux.just(1).concatWith(Mono.error(new RuntimeException()));
+
+        Mono<Integer> splitted = split(range);
+
+
+        StepVerifier.create(splitted).expectNext(1).expectComplete().verify(SHORT_WAIT);
+        StepVerifier.create(splitted).expectError().verify(SHORT_WAIT);
+        StepVerifier.create(splitted).expectError().verify(SHORT_WAIT);
     }
 
     @Test
@@ -53,9 +81,9 @@ public class SplitterTest {
 
         Mono<Integer> splitted = split(range);
 
-        StepVerifier.create(splitted).expectNext(1).expectComplete().verify();
-        StepVerifier.create(splitted).expectNext(2).expectComplete().verify();
-        StepVerifier.create(splitted).expectNext(3).expectComplete().verify();
+        StepVerifier.create(splitted).expectNext(1).expectComplete().verify(SHORT_WAIT);
+        StepVerifier.create(splitted).expectNext(2).expectComplete().verify(SHORT_WAIT);
+        StepVerifier.create(splitted).expectNext(3).expectComplete().verify(SHORT_WAIT);
     }
 
     private <T> Mono<T> split(Flux<T> flux) {
@@ -68,6 +96,8 @@ public class SplitterTest {
         private final Flux<T> flux;
         public boolean subscribed;
         Queue<CoreSubscriber> subscribers;
+        private boolean complete = false;
+        private Throwable error = null;
 
         public void setUpstream(Subscription upstream) {
             this.upstream = upstream;
@@ -100,7 +130,14 @@ public class SplitterTest {
                 }
             });
 
-            subscribeUpstream();
+            if (error != null) {
+                subscriber.onError(error);
+            } else if (complete) {
+                subscriber.onComplete();
+            } else {
+
+                subscribeUpstream();
+            }
         }
 
 
@@ -126,11 +163,14 @@ public class SplitterTest {
 
                     @Override
                     public void onError(Throwable throwable) {
-
+                        error = throwable;
+                        subscribers.forEach(s -> s.onError(error));
                     }
 
                     @Override
                     public void onComplete() {
+                        complete = true;
+                        subscribers.forEach(s -> s.onComplete());
 
                     }
                 });
