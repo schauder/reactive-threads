@@ -44,7 +44,6 @@ class SplittingMono<T> extends Mono<T> {
     private AtomicReference<State> state = new AtomicReference<>(NOT_SUBSCRIBED);
 
     private final Publisher<T> publisher;
-    private Set<CoreSubscriber<? super T>> subscribers = ConcurrentHashMap.newKeySet();
 
 
     private SplittingMono(Publisher<T> publisher) {
@@ -55,10 +54,8 @@ class SplittingMono<T> extends Mono<T> {
     @Override
     public void subscribe(CoreSubscriber<? super T> downstream) {
 
-
         subscribeUpstream();
 
-        subscribers.add(downstream);
         System.out.println("got subscription");
 
         state.get().subscribe(downstream);
@@ -87,7 +84,7 @@ class SplittingMono<T> extends Mono<T> {
                 @Override
                 public void onNext(T t) {
                     CoreSubscriber<? super T> downStream = thisState.requesters.remove();
-                    subscribers.remove(downStream);
+                    thisState.subscribers.remove(downStream);
                     downStream.onNext(t);
                     downStream.onComplete();
                 }
@@ -95,14 +92,14 @@ class SplittingMono<T> extends Mono<T> {
                 @Override
                 public void onError(Throwable throwable) {
                     if (state.compareAndSet(thisState, new Errored(throwable))) {
-                        subscribers.forEach(s -> s.onError(throwable));
+                        thisState.subscribers.forEach(s -> s.onError(throwable));
                     }
                 }
 
                 @Override
                 public void onComplete() {
                     if (state.compareAndSet(thisState, CANCELED)) {
-                        subscribers.forEach(Subscriber::onComplete);
+                        thisState.subscribers.forEach(Subscriber::onComplete);
                     }
                 }
             });
@@ -145,6 +142,7 @@ class SplittingMono<T> extends Mono<T> {
     static class Subscribed<T> implements State<T> {
 
         private final AtomicReference<Subscription> upstream;
+        private Set<CoreSubscriber<? super T>> subscribers = ConcurrentHashMap.newKeySet();
         private final Queue<CoreSubscriber<? super T>> requesters = new ConcurrentLinkedQueue<>();
 
         Subscribed(AtomicReference<Subscription> upstream) {
@@ -180,6 +178,7 @@ class SplittingMono<T> extends Mono<T> {
 
         @Override
         public void subscribe(Subscriber<? super T> downstream) {
+            subscribers.add((CoreSubscriber<? super T>) downstream);
             downstream.onSubscribe(createSubscription(downstream));
         }
     }
