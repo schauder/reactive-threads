@@ -16,6 +16,9 @@
 package de.schauder.reactivethreads.limited;
 
 import org.junit.Test;
+import org.mockito.InOrder;
+import org.reactivestreams.Subscription;
+import reactor.core.CoreSubscriber;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -24,6 +27,10 @@ import reactor.test.publisher.TestPublisher;
 import java.time.Duration;
 
 import static de.schauder.reactivethreads.limited.SplittingMono.split;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 /**
  * @author Jens Schauder
@@ -96,16 +103,22 @@ public class SplitterTest {
     }
 
     @Test
-    public void honorsCancel() {
+    public void sendsCompleteWithOutRequest() {
 
         TestPublisher<Object> publisher = TestPublisher.create();
 
         Mono<Object> splitted = SplittingMono.split(publisher);
 
-        StepVerifier.create(splitted).expectComplete().verify(SHORT_WAIT);
+        CoreSubscriber subscriber = mock(CoreSubscriber.class);
+
+        splitted.subscribe(subscriber);
 
         publisher.complete();
 
+        InOrder inOrder = inOrder(subscriber);
+        inOrder.verify(subscriber).onSubscribe(any(Subscription.class));
+        inOrder.verify(subscriber).onComplete();
+        verifyNoMoreInteractions(subscriber);
     }
 
 
