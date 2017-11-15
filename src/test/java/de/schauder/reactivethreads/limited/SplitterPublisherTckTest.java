@@ -15,22 +15,15 @@
  */
 package de.schauder.reactivethreads.limited;
 
-import org.junit.Test;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.tck.PublisherVerification;
 import org.reactivestreams.tck.TestEnvironment;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
-
-import java.time.Duration;
-
-import static de.schauder.reactivethreads.limited.SplittingMono.split;
 
 /**
  * @author Jens Schauder
-*/
-public class SplitterPublisherTckTest extends PublisherVerification<Integer>{
+ */
+public class SplitterPublisherTckTest extends PublisherVerification<Integer> {
 
 
     public SplitterPublisherTckTest() {
