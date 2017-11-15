@@ -26,7 +26,6 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static de.schauder.reactivethreads.limited.SplittingMono.PredefinedState.CANCELED;
@@ -47,7 +46,6 @@ class SplittingMono<T> extends Mono<T> {
     private final Publisher<T> publisher;
     private Set<CoreSubscriber<? super T>> subscribers = ConcurrentHashMap.newKeySet();
 
-    private AtomicBoolean complete = new AtomicBoolean(false);
 
     private SplittingMono(Publisher<T> publisher) {
         this.publisher = publisher;
@@ -104,7 +102,6 @@ class SplittingMono<T> extends Mono<T> {
                 @Override
                 public void onComplete() {
                     if (state.compareAndSet(thisState, CANCELED)) {
-                        complete.set(true);
                         subscribers.forEach(Subscriber::onComplete);
                     }
                 }
@@ -125,6 +122,7 @@ class SplittingMono<T> extends Mono<T> {
             public Subscription createSubscription(Subscriber<? super Object> downstream) {
                 throw new UnsupportedOperationException("Can't create a subscription before being subscribed");
             }
+
             @Override
             public void subscribe(Subscriber<? super Object> downstream) {
                 throw new UnsupportedOperationException("Can't subscribe before being subscribed myself");
