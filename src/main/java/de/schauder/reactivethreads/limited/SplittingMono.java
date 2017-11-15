@@ -55,27 +55,26 @@ class SplittingMono<T> extends Mono<T> {
     public void subscribe(CoreSubscriber<? super T> downstream) {
 
         subscribeUpstream();
-
-        System.out.println("got subscription");
-
         state.get().subscribe(downstream);
     }
 
 
     private void subscribeUpstream() {
 
-        AtomicReference<Subscription> upstream = new AtomicReference<>();
-        Subscribed<T> thisState = new Subscribed<>(upstream);
+        final AtomicReference<Subscription> upstream = new AtomicReference<>();
+        final Subscribed<T> newState = new Subscribed<>(upstream);
 
-        if (state.compareAndSet(NOT_SUBSCRIBED, thisState)) {
+        if (state.compareAndSet(NOT_SUBSCRIBED, newState)) {
 
-            System.out.println("subscribing upstream");
             publisher.subscribe(new Subscriber<T>() {
                 @Override
                 public void onSubscribe(Subscription subscription) {
-                    System.out.println("on subscription");
                     upstream.set(subscription);
-                    int size = thisState.requesters.size();
+
+                    // TODO: if downstream subscribes and requests here it requests from upstream
+                    // but gets included below
+
+                    int size = newState.requesters.size();
                     if (size > 0) {
                         subscription.request(size);
                     }
@@ -83,23 +82,23 @@ class SplittingMono<T> extends Mono<T> {
 
                 @Override
                 public void onNext(T t) {
-                    CoreSubscriber<? super T> downStream = thisState.requesters.remove();
-                    thisState.subscribers.remove(downStream);
+                    CoreSubscriber<? super T> downStream = newState.requesters.remove();
+                    newState.subscribers.remove(downStream);
                     downStream.onNext(t);
                     downStream.onComplete();
                 }
 
                 @Override
                 public void onError(Throwable throwable) {
-                    if (state.compareAndSet(thisState, new Errored(throwable))) {
-                        thisState.subscribers.forEach(s -> s.onError(throwable));
+                    if (state.compareAndSet(newState, new Errored(throwable))) {
+                        newState.subscribers.forEach(s -> s.onError(throwable));
                     }
                 }
 
                 @Override
                 public void onComplete() {
-                    if (state.compareAndSet(thisState, CANCELED)) {
-                        thisState.subscribers.forEach(Subscriber::onComplete);
+                    if (state.compareAndSet(newState, CANCELED)) {
+                        newState.subscribers.forEach(Subscriber::onComplete);
                     }
                 }
             });
