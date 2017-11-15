@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package de.schauder.reactivethreads.demo;
+package de.schauder.reactivethreads.limited;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -21,6 +21,8 @@ import reactor.core.publisher.Mono;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static de.schauder.reactivethreads.limited.SplittingMono.split;
 
 /**
  * Demo how one can protect a resource from overloading when it doesn't implement backpressure itself.
@@ -34,7 +36,7 @@ public class LimitedRessource {
     }
 
     // Resource resource = new OverloadableResource();
-    Resource resource = new LoadLimitingResource( new OverloadableResource(), 3);
+    Resource resource = new LoadLimitingResource(new OverloadableResource(), 3);
 
     Runnable load = () -> resource.doSomethingFluxish().blockLast();
 
@@ -70,9 +72,9 @@ public class LimitedRessource {
      * limits the load on a Resource per instance basis.
      */
     private static class LoadLimitingResource implements Resource {
-        AtomicInteger counter = new AtomicInteger();
+        AtomicInteger counter;
 
-        private final Flux<Integer> tokens;
+        private final Mono<Integer> tokens;
         private final BlockingQueue<Integer> returnedTokens;
 
 
@@ -80,30 +82,33 @@ public class LimitedRessource {
 
         LoadLimitingResource(Resource delegate, int maximumLoad) {
 
+            counter = new AtomicInteger(100);
             this.delegate = delegate;
-            returnedTokens = new LinkedBlockingQueue<>(maximumLoad+1);
+            returnedTokens = new LinkedBlockingQueue<>(maximumLoad + 1);
 
-            tokens = Flux.range(0, maximumLoad)
-                    .concatWith(Flux.create(fs -> {
-                        while (!fs.isCancelled()) {
-                            try {
-                                Integer take = returnedTokens.take();
-                                fs.next(take);
-                                System.out.print("t:" + take);
-                            } catch (InterruptedException e) {
-                                fs.error(e);
-                            }
-                        }
-                    }));
+            tokens = split(Flux.create(fs -> {
+                for (int i = 0; i < maximumLoad; i++) {
+                    fs.next(counter.incrementAndGet());
+                }
+                while (!fs.isCancelled()) {
+                    try {
+                        Integer take = returnedTokens.take();
+                        fs.next(take);
+                        System.out.print("t:" + take + " ");
+                    } catch (InterruptedException e) {
+                        fs.error(e);
+                    }
+                }
+            }));
         }
 
 
         @Override
         public Flux<String> doSomethingFluxish() {
-            return tokens.next().thenMany(delegate.doSomethingFluxish().doOnTerminate(() -> {
+            return tokens.thenMany(delegate.doSomethingFluxish().doOnTerminate(() -> {
                 int counter = this.counter.incrementAndGet();
                 returnedTokens.add(counter);
-                System.out.print("p:" + counter);
+                System.out.print("p:" + counter + " ");
             }));
         }
     }
@@ -120,8 +125,9 @@ public class LimitedRessource {
 
         public Flux<String> doSomethingFluxish() {
 
-            addLoad();
+
             return Flux.just("flux-result")
+                    .doOnSubscribe(s -> addLoad())
                     .doOnTerminate(() -> load.decrementAndGet());
         }
 

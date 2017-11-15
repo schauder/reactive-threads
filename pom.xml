@@ -45,6 +45,13 @@
 			<artifactId>reactor-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+
+        <dependency>
+            <groupId>org.reactivestreams</groupId>
+            <artifactId>reactive-streams-tck</artifactId>
+            <version>1.0.1</version>
+            <scope>test</scope>
+        </dependency>
 	</dependencies>
 
 	<build>
