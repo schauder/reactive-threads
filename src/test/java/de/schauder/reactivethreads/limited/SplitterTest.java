@@ -16,7 +16,6 @@
 package de.schauder.reactivethreads.limited;
 
 import org.junit.Test;
-import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -32,7 +31,7 @@ import static de.schauder.reactivethreads.limited.SplittingMono.split;
  */
 public class SplitterTest {
 
-    public static final Duration SHORT_WAIT = Duration.ofMillis(100);
+    static final Duration SHORT_WAIT = Duration.ofMillis(100);
 
     @Test
     public void eachEventGetsPushedOnce() {
@@ -67,7 +66,6 @@ public class SplitterTest {
 
         Mono<Integer> splitted = split(range);
 
-
         StepVerifier.create(splitted).expectNext(1).expectComplete().verify(SHORT_WAIT);
         StepVerifier.create(splitted).expectError().verify(SHORT_WAIT);
         StepVerifier.create(splitted).expectError().verify(SHORT_WAIT);
@@ -79,7 +77,6 @@ public class SplitterTest {
         Flux<Integer> range = Flux.error(new RuntimeException());
 
         Mono<Integer> splitted = split(range);
-
 
         StepVerifier.create(splitted).expectError().verify(SHORT_WAIT);
         StepVerifier.create(splitted).expectError().verify(SHORT_WAIT);
@@ -99,7 +96,7 @@ public class SplitterTest {
     }
 
     @Test
-    public void honorsCancel(){
+    public void honorsCancel() {
 
         TestPublisher<Object> publisher = TestPublisher.create();
 
@@ -110,5 +107,8 @@ public class SplitterTest {
         publisher.complete();
 
     }
+
+
+
 
 }

@@ -15,6 +15,7 @@
  */
 package de.schauder.reactivethreads.limited;
 
+import lombok.Value;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
@@ -22,9 +23,14 @@ import reactor.core.CoreSubscriber;
 import reactor.core.publisher.Mono;
 
 import java.util.Queue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static de.schauder.reactivethreads.limited.SplittingMono.PredefinedState.CANCELED;
+import static de.schauder.reactivethreads.limited.SplittingMono.PredefinedState.NOT_SUBSCRIBED;
 
 /**
  * @author Jens Schauder
@@ -36,67 +42,45 @@ class SplittingMono<T> extends Mono<T> {
     }
 
 
+    private AtomicReference<State> state = new AtomicReference<>(NOT_SUBSCRIBED);
+
     private final Publisher<T> publisher;
-    private AtomicBoolean subscribed = new AtomicBoolean(false);
-    private Queue<CoreSubscriber<? super T>> subscribers;
+    private Set<CoreSubscriber<? super T>> subscribers = ConcurrentHashMap.newKeySet();
 
     private AtomicBoolean complete = new AtomicBoolean(false);
-    private AtomicReference<Throwable> error = new AtomicReference<>(null);
-
-    private void setUpstream(Subscription upstream) {
-        this.upstream = upstream;
-    }
-
-    private Subscription upstream;
 
     private SplittingMono(Publisher<T> publisher) {
         this.publisher = publisher;
-        subscribers = new ConcurrentLinkedQueue<>();
+
     }
 
     @Override
-    public void subscribe(CoreSubscriber<? super T> subscriber) {
+    public void subscribe(CoreSubscriber<? super T> downstream) {
 
-        subscriber.onSubscribe(new Subscription() {
-            @Override
-            public void request(long amount) {
-// TODO: requesting multiple times.
-                if (amount <= 0) {
-                    subscriber.onError(new IllegalArgumentException("Argument of 'request' must be positive. See Reactive Streams Spec §3.9"));
-                    return;
-                }
-
-                subscribers.add(subscriber);
-                if (upstream != null) {
-                    upstream.request(1);
-                }
-            }
-
-            @Override
-            public void cancel() {
-// TODO
-            }
-        });
 
         subscribeUpstream();
 
-        if (error.get() != null) {
-            subscriber.onError(error.get());
-        } else if (complete.get()) {
-            subscriber.onComplete();
-        }
+        subscribers.add(downstream);
+        System.out.println("got subscription");
+
+        state.get().subscribe(downstream);
     }
 
 
     private void subscribeUpstream() {
 
-        if (subscribed.compareAndSet(false, true)) {
+        AtomicReference<Subscription> upstream = new AtomicReference<>();
+        Subscribed<T> thisState = new Subscribed<>(upstream);
 
+        if (state.compareAndSet(NOT_SUBSCRIBED, thisState)) {
+
+            System.out.println("subscribing upstream");
             publisher.subscribe(new Subscriber<T>() {
                 @Override
                 public void onSubscribe(Subscription subscription) {
-                    setUpstream(subscription);
-                    int size = subscribers.size();
+                    System.out.println("on subscription");
+                    upstream.set(subscription);
+                    int size = thisState.requesters.size();
                     if (size > 0) {
                         subscription.request(size);
                     }
@@ -104,26 +88,132 @@ class SplittingMono<T> extends Mono<T> {
 
                 @Override
                 public void onNext(T t) {
-                    CoreSubscriber<? super T> downStream = subscribers.remove();
+                    CoreSubscriber<? super T> downStream = thisState.requesters.remove();
+                    subscribers.remove(downStream);
                     downStream.onNext(t);
                     downStream.onComplete();
-
                 }
 
                 @Override
                 public void onError(Throwable throwable) {
-                    if (error.compareAndSet(null, throwable)) {
-                        subscribers.forEach(s -> s.onError(error.get()));
+                    if (state.compareAndSet(thisState, new Errored(throwable))) {
+                        subscribers.forEach(s -> s.onError(throwable));
                     }
                 }
 
                 @Override
                 public void onComplete() {
-                    if (complete.compareAndSet(false, true)) {
+                    if (state.compareAndSet(thisState, CANCELED)) {
+                        complete.set(true);
                         subscribers.forEach(Subscriber::onComplete);
                     }
                 }
             });
         }
     }
+
+    interface State<T> {
+        @Deprecated
+        Subscription createSubscription(Subscriber<? super T> downstream);
+
+        void subscribe(Subscriber<? super T> downstream);
+    }
+
+    enum PredefinedState implements State<Object> {
+        NOT_SUBSCRIBED {
+            @Override
+            public Subscription createSubscription(Subscriber<? super Object> downstream) {
+                throw new UnsupportedOperationException("Can't create a subscription before being subscribed");
+            }
+            @Override
+            public void subscribe(Subscriber<? super Object> downstream) {
+                throw new UnsupportedOperationException("Can't subscribe before being subscribed myself");
+            }
+        },
+        CANCELED {
+            @Override
+            public Subscription createSubscription(Subscriber<? super Object> downstream) {
+                return new CompletedSubscription();
+            }
+
+            @Override
+            public void subscribe(Subscriber<? super Object> downstream) {
+                downstream.onSubscribe(createSubscription(downstream));
+                downstream.onComplete();
+            }
+        }
+    }
+
+    static class Subscribed<T> implements State<T> {
+
+        private final AtomicReference<Subscription> upstream;
+        private final Queue<CoreSubscriber<? super T>> requesters = new ConcurrentLinkedQueue<>();
+
+        Subscribed(AtomicReference<Subscription> upstream) {
+            this.upstream = upstream;
+        }
+
+
+        @Override
+        public Subscription createSubscription(Subscriber<? super T> downstream) {
+            return new Subscription() {
+                @Override
+                public void request(long amount) {
+                    System.out.println("got request");
+// TODO: requesting multiple times.
+                    if (amount <= 0) {
+                        downstream.onError(new IllegalArgumentException("Argument of 'request' must be positive. See Reactive Streams Spec §3.9"));
+                        return;
+                    }
+// TODO: I think this needs a synchronized block
+                    requesters.add((CoreSubscriber<? super T>) downstream);
+                    Subscription subscription = upstream.get();
+                    if (subscription != null) {
+                        subscription.request(1);
+                    }
+                }
+
+                @Override
+                public void cancel() {
+// TODO
+                }
+            };
+        }
+
+        @Override
+        public void subscribe(Subscriber<? super T> downstream) {
+            downstream.onSubscribe(createSubscription(downstream));
+        }
+    }
+
+
+    @Value
+    static class Errored implements State<Object> {
+
+        Throwable error;
+
+        @Override
+        public Subscription createSubscription(Subscriber<? super Object> downstream) {
+            return new CompletedSubscription();
+        }
+
+        @Override
+        public void subscribe(Subscriber<? super Object> downstream) {
+            downstream.onSubscribe(createSubscription(downstream));
+            downstream.onError(error);
+        }
+    }
+
+    private static class CompletedSubscription implements Subscription {
+        @Override
+        public void request(long l) {
+
+        }
+
+        @Override
+        public void cancel() {
+
+        }
+    }
 }
+
