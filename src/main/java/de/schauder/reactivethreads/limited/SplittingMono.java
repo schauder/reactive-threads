@@ -19,6 +19,7 @@ import lombok.Value;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
+import org.springframework.util.Assert;
 import reactor.core.CoreSubscriber;
 import reactor.core.publisher.Mono;
 
@@ -28,7 +29,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static de.schauder.reactivethreads.limited.SplittingMono.PredefinedState.CANCELED;
+import static de.schauder.reactivethreads.limited.SplittingMono.PredefinedState.COMPLETED;
 import static de.schauder.reactivethreads.limited.SplittingMono.PredefinedState.NOT_SUBSCRIBED;
 
 /**
@@ -69,20 +70,22 @@ class SplittingMono<T> extends Mono<T> {
             publisher.subscribe(new Subscriber<T>() {
                 @Override
                 public void onSubscribe(Subscription subscription) {
-                    upstream.set(subscription);
 
-                    // TODO: if downstream subscribes and requests here it requests from upstream
-                    // but gets included below
-
-                    int size = newState.requesters.size();
-                    if (size > 0) {
-                        subscription.request(size);
+                    synchronized (newState) {
+                        upstream.set(subscription);
+                        int size = newState.requesters.size();
+                        if (size > 0) {
+                            subscription.request(size);
+                        }
                     }
                 }
 
                 @Override
                 public void onNext(T t) {
+
                     CoreSubscriber<? super T> downStream = newState.requesters.remove();
+                    Assert.notNull(downStream, "We didn't get a requester for a call to onNext. Either we f***** up, or we get more calls to onNext then requested!");
+
                     newState.subscribers.remove(downStream);
                     downStream.onNext(t);
                     downStream.onComplete();
@@ -92,13 +95,15 @@ class SplittingMono<T> extends Mono<T> {
                 public void onError(Throwable throwable) {
                     if (state.compareAndSet(newState, new Errored(throwable))) {
                         newState.subscribers.forEach(s -> s.onError(throwable));
+                        newState.subscribers.clear();
                     }
                 }
 
                 @Override
                 public void onComplete() {
-                    if (state.compareAndSet(newState, CANCELED)) {
+                    if (state.compareAndSet(newState, COMPLETED)) {
                         newState.subscribers.forEach(Subscriber::onComplete);
+                        newState.subscribers.clear();
                     }
                 }
             });
@@ -113,7 +118,9 @@ class SplittingMono<T> extends Mono<T> {
     }
 
     enum PredefinedState implements State<Object> {
+
         NOT_SUBSCRIBED {
+
             @Override
             public Subscription createSubscription(Subscriber<? super Object> downstream) {
                 throw new UnsupportedOperationException("Can't create a subscription before being subscribed");
@@ -124,7 +131,9 @@ class SplittingMono<T> extends Mono<T> {
                 throw new UnsupportedOperationException("Can't subscribe before being subscribed myself");
             }
         },
-        CANCELED {
+
+        COMPLETED {
+
             @Override
             public Subscription createSubscription(Subscriber<? super Object> downstream) {
                 return new CompletedSubscription();
@@ -132,6 +141,7 @@ class SplittingMono<T> extends Mono<T> {
 
             @Override
             public void subscribe(Subscriber<? super Object> downstream) {
+
                 downstream.onSubscribe(createSubscription(downstream));
                 downstream.onComplete();
             }
@@ -151,20 +161,24 @@ class SplittingMono<T> extends Mono<T> {
 
         @Override
         public Subscription createSubscription(Subscriber<? super T> downstream) {
+
             return new Subscription() {
+
                 @Override
                 public void request(long amount) {
-                    System.out.println("got request");
+
 // TODO: requesting multiple times.
                     if (amount <= 0) {
                         downstream.onError(new IllegalArgumentException("Argument of 'request' must be positive. See Reactive Streams Spec §3.9"));
                         return;
                     }
-// TODO: I think this needs a synchronized block
-                    requesters.add((CoreSubscriber<? super T>) downstream);
-                    Subscription subscription = upstream.get();
-                    if (subscription != null) {
-                        subscription.request(1);
+
+                    synchronized (Subscribed.this) {
+                        requesters.add((CoreSubscriber<? super T>) downstream);
+                        Subscription subscription = upstream.get();
+                        if (subscription != null) {
+                            subscription.request(1);
+                        }
                     }
                 }
 
@@ -195,21 +209,19 @@ class SplittingMono<T> extends Mono<T> {
 
         @Override
         public void subscribe(Subscriber<? super Object> downstream) {
+
             downstream.onSubscribe(createSubscription(downstream));
             downstream.onError(error);
         }
     }
 
     private static class CompletedSubscription implements Subscription {
-        @Override
-        public void request(long l) {
-
-        }
 
         @Override
-        public void cancel() {
+        public void request(long l) {}
 
-        }
+        @Override
+        public void cancel() {}
     }
 }
 
