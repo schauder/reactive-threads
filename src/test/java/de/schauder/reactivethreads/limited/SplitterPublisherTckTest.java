@@ -27,7 +27,7 @@ public class SplitterPublisherTckTest extends PublisherVerification<Integer> {
 
 
     public SplitterPublisherTckTest() {
-        super(new TestEnvironment());
+        super(new TestEnvironment(true));
     }
 
     @Override

@@ -105,6 +105,7 @@ class SplittingMono<T> extends Mono<T> {
 
                 @Override
                 public void onComplete() {
+
                     if (state.compareAndSet(newState, (State<T>) COMPLETED)) {
                         newState.subscribers.forEach(Subscriber::onComplete);
                         newState.subscribers.clear();
@@ -166,6 +167,8 @@ class SplittingMono<T> extends Mono<T> {
 
             return new Subscription() {
 
+                public boolean canceled = false;
+
                 @Override
                 public void request(long amount) {
 
@@ -186,7 +189,17 @@ class SplittingMono<T> extends Mono<T> {
 
                 @Override
                 public void cancel() {
-// TODO
+                    if (canceled) {
+                        return;
+                    }
+
+                    canceled = true;
+                    synchronized (Subscribed.this) {
+                        // if we already requested something from upstream we'll deliver it.
+                        if (!requesters.contains(downstream)) {
+                            subscribers.remove(downstream);
+                        }
+                    }
                 }
             };
         }

@@ -25,12 +25,12 @@ import reactor.test.StepVerifier;
 import reactor.test.publisher.TestPublisher;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static de.schauder.reactivethreads.limited.SplittingMono.split;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.*;
 
 /**
  * @author Jens Schauder
@@ -121,7 +121,46 @@ public class SplitterTest {
         verifyNoMoreInteractions(subscriber);
     }
 
+    @Test
+    public void honorsCancel() {
 
+        TestPublisher<Object> publisher = TestPublisher.create();
+
+        Mono<Object> splitted = SplittingMono.split(publisher);
+
+        AtomicReference<Subscription> subscription = new AtomicReference<>();
+
+        CoreSubscriber subscriber = spy(new CoreSubscriber() {
+
+            @Override
+            public void onSubscribe(Subscription s) {
+                subscription.set(s);
+            }
+
+            @Override
+            public void onNext(Object o) {
+            }
+
+            @Override
+            public void onError(Throwable throwable) {
+            }
+
+            @Override
+            public void onComplete() {
+            }
+        });
+
+        splitted.subscribe(subscriber);
+
+        assertThat(subscription.get()).isNotNull();
+
+        subscription.get().cancel();
+
+        publisher.next("event-shouldn't make it through");
+
+        verify(subscriber).onSubscribe(any(Subscription.class));
+        verifyNoMoreInteractions(subscriber);
+    }
 
 
 }
