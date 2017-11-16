@@ -19,6 +19,7 @@ import lombok.Value;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
+import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
 import reactor.core.CoreSubscriber;
 import reactor.core.publisher.Mono;
@@ -42,7 +43,8 @@ class SplittingMono<T> extends Mono<T> {
     }
 
 
-    private AtomicReference<State> state = new AtomicReference<>(NOT_SUBSCRIBED);
+    @SuppressWarnings("unchecked")
+    private AtomicReference<State<T>> state = new AtomicReference<>((State<T>) NOT_SUBSCRIBED);
 
     private final Publisher<T> publisher;
 
@@ -53,19 +55,21 @@ class SplittingMono<T> extends Mono<T> {
     }
 
     @Override
-    public void subscribe(CoreSubscriber<? super T> downstream) {
+    public void subscribe(@Nullable CoreSubscriber<? super T> downstream) {
 
+        if (downstream == null) return;
         subscribeUpstream();
         state.get().subscribe(downstream);
     }
 
 
+    @SuppressWarnings("unchecked")
     private void subscribeUpstream() {
 
         final AtomicReference<Subscription> upstream = new AtomicReference<>();
         final Subscribed<T> newState = new Subscribed<>(upstream);
 
-        if (state.compareAndSet(NOT_SUBSCRIBED, newState)) {
+        if (state.compareAndSet((State) NOT_SUBSCRIBED, newState)) {
 
             publisher.subscribe(new Subscriber<T>() {
                 @Override
@@ -83,7 +87,7 @@ class SplittingMono<T> extends Mono<T> {
                 @Override
                 public void onNext(T t) {
 
-                    CoreSubscriber<? super T> downStream = newState.requesters.remove();
+                    Subscriber<? super T> downStream = newState.requesters.remove();
                     Assert.notNull(downStream, "We didn't get a requester for a call to onNext. Either we f***** up, or we get more calls to onNext then requested!");
 
                     newState.subscribers.remove(downStream);
@@ -101,7 +105,7 @@ class SplittingMono<T> extends Mono<T> {
 
                 @Override
                 public void onComplete() {
-                    if (state.compareAndSet(newState, COMPLETED)) {
+                    if (state.compareAndSet(newState, (State<T>) COMPLETED)) {
                         newState.subscribers.forEach(Subscriber::onComplete);
                         newState.subscribers.clear();
                     }
@@ -120,7 +124,6 @@ class SplittingMono<T> extends Mono<T> {
     enum PredefinedState implements State<Object> {
 
         NOT_SUBSCRIBED {
-
             @Override
             public Subscription createSubscription(Subscriber<? super Object> downstream) {
                 throw new UnsupportedOperationException("Can't create a subscription before being subscribed");
@@ -133,7 +136,6 @@ class SplittingMono<T> extends Mono<T> {
         },
 
         COMPLETED {
-
             @Override
             public Subscription createSubscription(Subscriber<? super Object> downstream) {
                 return new CompletedSubscription();
@@ -151,8 +153,8 @@ class SplittingMono<T> extends Mono<T> {
     static class Subscribed<T> implements State<T> {
 
         private final AtomicReference<Subscription> upstream;
-        private Set<CoreSubscriber<? super T>> subscribers = ConcurrentHashMap.newKeySet();
-        private final Queue<CoreSubscriber<? super T>> requesters = new ConcurrentLinkedQueue<>();
+        private Set<Subscriber<? super T>> subscribers = ConcurrentHashMap.newKeySet();
+        private final Queue<Subscriber<? super T>> requesters = new ConcurrentLinkedQueue<>();
 
         Subscribed(AtomicReference<Subscription> upstream) {
             this.upstream = upstream;
@@ -174,7 +176,7 @@ class SplittingMono<T> extends Mono<T> {
                     }
 
                     synchronized (Subscribed.this) {
-                        requesters.add((CoreSubscriber<? super T>) downstream);
+                        requesters.add(downstream);
                         Subscription subscription = upstream.get();
                         if (subscription != null) {
                             subscription.request(1);
@@ -191,24 +193,24 @@ class SplittingMono<T> extends Mono<T> {
 
         @Override
         public void subscribe(Subscriber<? super T> downstream) {
-            subscribers.add((CoreSubscriber<? super T>) downstream);
+            subscribers.add(downstream);
             downstream.onSubscribe(createSubscription(downstream));
         }
     }
 
 
     @Value
-    static class Errored implements State<Object> {
+    static class Errored implements State {
 
         Throwable error;
 
         @Override
-        public Subscription createSubscription(Subscriber<? super Object> downstream) {
+        public Subscription createSubscription(Subscriber downstream) {
             return new CompletedSubscription();
         }
 
         @Override
-        public void subscribe(Subscriber<? super Object> downstream) {
+        public void subscribe(Subscriber downstream) {
 
             downstream.onSubscribe(createSubscription(downstream));
             downstream.onError(error);
@@ -218,10 +220,12 @@ class SplittingMono<T> extends Mono<T> {
     private static class CompletedSubscription implements Subscription {
 
         @Override
-        public void request(long l) {}
+        public void request(long l) {
+        }
 
         @Override
-        public void cancel() {}
+        public void cancel() {
+        }
     }
 }
 
