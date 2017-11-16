@@ -105,11 +105,13 @@ public class LimitedRessource {
 
         @Override
         public Flux<String> doSomethingFluxish() {
-            return tokens.thenMany(delegate.doSomethingFluxish().doOnTerminate(() -> {
-                int counter = this.counter.incrementAndGet();
-                returnedTokens.add(counter);
-                System.out.print("p:" + counter + " ");
-            }));
+            return tokens.thenMany( // wait for a token
+                    delegate.doSomethingFluxish()
+                            .doOnTerminate(() -> { // when done return the token (actually create a new one, but that's just for debugging purpose. Tokens don't have identity just there number matters
+                                int counter = this.counter.incrementAndGet();
+                                returnedTokens.add(counter);
+                                System.out.print("p:" + counter + " ");
+                            }));
         }
     }
 
